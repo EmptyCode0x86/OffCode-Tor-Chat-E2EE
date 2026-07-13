@@ -1,6 +1,6 @@
 <div align="center">
 
-# OffCode-TorChat-E2EE
+# OffCode-Tor-Chat-E2EE
 
 **Anonymous - End-to-End Encrypted - Self-Hosted Chat over Tor Hidden Services**
 
