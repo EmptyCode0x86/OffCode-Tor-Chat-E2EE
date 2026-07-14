@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧅 OffCode-Tor-Chat-E2EE
+# 🧅 OffCode Tor Chat E2EE
 
 **Anonymous - End-to-End Encrypted - Self-Hosted Chat over Tor Hidden Services**
 
@@ -18,11 +18,12 @@
 
 ## What is TorChat?
 
-TorChat is a **self-hosted anonymous chat server** that runs entirely over the Tor network as a hidden service (`.onion` address). It combines three independent layers of protection:
+TorChat is a **self-hosted anonymous chat server** that runs entirely over the Tor network as a hidden service (`.onion` address). It combines independent layers of protection:
 
-1. **Tor Network** — hides both the server and users real IP addresses
-2. **End-to-End Encryption** — messages are encrypted in the browser before being sent; the server only ever sees ciphertext
-3. **Encrypted Storage** — all data at rest is protected by SQLCipher (AES-256)
+1. **Tor Network** — hides both the server and users’ real IP addresses
+2. **Optional Full Vanguards** — hardens long-lived hidden services against guard-discovery / traffic-analysis attacks
+3. **End-to-End Encryption** — messages are encrypted in the browser before being sent; the server only ever sees ciphertext
+4. **Encrypted Storage** — all data at rest is protected by SQLCipher (AES-256)
 
 Anyone who knows the `.onion` address and room credentials can connect using Tor Browser. No accounts, no phone numbers, no personal information required.
 
@@ -110,7 +111,63 @@ ciphertext = AES-GCM(key=roomKey, plaintext=message, AAD="roomId|senderId|nonce"
 
 - ChatServer binds exclusively to `127.0.0.1` — no clearnet exposure whatsoever
 - `tor.exe` is bundled and managed automatically by Server Manager
+- Optional **Full Vanguards** (`Vanguard` checkbox): Python addon + ControlPort for long-lived HS guard-discovery mitigation — see `TorConnection/README_VANGUARDS.txt`
 - All client IP addresses are hidden — even the server operator cannot identify users
+
+---
+
+### Full Vanguards — Guard-Discovery Protection
+
+#### The Problem: Guard-Discovery Attacks
+
+A standard Tor Hidden Service uses a small set of **guard nodes** (entry nodes) as the first hop of its onion circuits. Over time, a network-level adversary can observe which relays the hidden service connects to and gradually de-anonymize the server's real IP by:
+
+1. Mounting repeated circuit-building to force the HS to use relays the attacker controls
+2. Correlating traffic timing across many circuits (traffic analysis)
+3. Narrowing down candidates until the guard node — and therefore the host — is identified
+
+This is especially dangerous for **long-lived hidden services** (servers that stay online for days or weeks), because the attacker has more time to collect observations.
+
+#### How Vanguards Defends Against This
+
+Full Vanguards (the [mikeperry-tor/vanguards](https://github.com/mikeperry-tor/vanguards) Python addon) implements **multi-layer guard pinning**:
+
+| Layer | What it does |
+|-------|-------------|
+| **L2 vanguards** | Pins a rotating set of ~4 middle-layer nodes; changes every 1–8 days |
+| **L3 vanguards** | Pins a rotating set of ~8 pre-guard nodes; changes every 1–8 hours |
+
+By pinning layers, the number of relays that ever observe the hidden service's traffic is drastically reduced and controlled — making large-scale guard-discovery statistically infeasible over the lifetime of the service.
+
+```
+Without Vanguards:   HS → random guard → random middle → rendezvous
+With Vanguards:      HS → pinned L3 → pinned L2 → guard → rendezvous
+                          (rotated hourly) (rotated daily)
+```
+
+#### How TorChat Integrates Vanguards
+
+The feature is **opt-in** via the `Vanguard` checkbox in Server Manager:
+
+1. **torrc changes** (`TorHiddenServiceSetup.cs`): When the checkbox is enabled, `ControlPort 127.0.0.1:27551` and `CookieAuthentication 1` are added to the torrc. Without the checkbox the torrc is minimal — no ControlPort is opened.
+
+2. **Process management** (`VanguardsProcessHost.cs`): After `tor.exe` bootstraps, Server Manager waits until the ControlPort is accepting connections (up to 30 s), then launches:
+   ```
+   python vanguards.py --control_port 27551 --config vanguards.conf --disable_bandguards
+   ```
+   `--disable_bandguards` is intentional: bandwidth-based circuit-killing would disconnect chat sessions; the primary L2/L3 guard pinning defence remains fully active.
+
+3. **Authentication**: ControlPort uses Tor's `CookieAuthentication`. The cookie file lives at `%AppData%\TorChat_ServerManager\TorData\control_auth_cookie` and is never exposed to the network — ControlPort listens on loopback only.
+
+4. **Soft-fail design**: If Python 3 or the `stem` library is missing, the checkbox is silently ignored and the hidden service continues to operate normally (without guard pinning). The Server Manager log reports the exact reason.
+
+#### What Vanguards Does NOT Do
+
+- It does **not** replace E2EE — message content is still only protected by client-side AES-GCM
+- It does **not** hide the existence of the server from its own guard nodes — it only limits how many relays can observe the HS's circuit-building
+- It adds **latency** (~200–500 ms per circuit) due to longer paths; this is a deliberate privacy/performance tradeoff
+
+> **Recommendation**: Enable Full Vanguards if your hidden service is intended to stay online for more than a few hours and you operate in a high-threat environment. Requires Python 3.10+ and `stem` — see `TorConnection/README_VANGUARDS.txt` for setup.
 
 ---
 
@@ -249,6 +306,7 @@ TorChat/
 +-- ServerManager/              WinForms GUI (process and Tor lifecycle)
 |   +-- ChatServerProcessHost.cs    Spawns ChatServer, generates admin token
 |   +-- TorHiddenServiceSetup.cs    Manages tor.exe hidden service
+|   +-- VanguardsProcessHost.cs     Optional Full Vanguards (Python addon)
 |
 +-- ChatServer/                 ASP.NET Core 9 backend
 |   +-- Hubs/ChatHub.cs             SignalR hub: auth, replay, rate limiting
@@ -261,6 +319,7 @@ TorChat/
 |       +-- app.js                  UI logic and room management
 |
 +-- TorConnection/              Tor Expert Bundle (tor.exe + geoip data)
+|   +-- Vanguards/              Optional Full Vanguards Python addon (vendored)
 ```
 
 ---
