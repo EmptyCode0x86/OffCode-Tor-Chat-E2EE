@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧅 OffCode Tor Chat E2EE
+# 🧅 OffCode Tor-Chat E2EE
 
 **Anonymous - End-to-End Encrypted - Self-Hosted Chat over Tor Hidden Services**
 
@@ -10,7 +10,7 @@
 [![Encryption](https://img.shields.io/badge/encryption-AES--256--GCM-green)](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
 [![Source](https://img.shields.io/badge/source%20code-$29-orange)](https://www.dev-offcode.com/TorChatPage.html)
 
-*A fully self-hosted, anonymous chat platform where the server operator cannot read your messages — ever.*
+*Self-hosted anonymous chat over Tor. Password-protected rooms are server-blind E2EE; open rooms are public encrypted channels (key = room id).*
 
 </div>
 
@@ -22,10 +22,12 @@ TorChat is a **self-hosted anonymous chat server** that runs entirely over the T
 
 1. **Tor Network** — hides both the server and users’ real IP addresses
 2. **Optional Full Vanguards** — hardens long-lived hidden services against guard-discovery / traffic-analysis attacks
-3. **End-to-End Encryption** — messages are encrypted in the browser before being sent; the server only ever sees ciphertext
-4. **Encrypted Storage** — all data at rest is protected by SQLCipher (AES-256)
+3. **End-to-End Encryption** — messages are encrypted in the browser (AES-256-GCM) before send; the server stores ciphertext only
+4. **Encrypted Storage** — data at rest is protected by SQLCipher (AES-256)
 
-Anyone who knows the `.onion` address and room credentials can connect using Tor Browser. No accounts, no phone numbers, no personal information required.
+**Room types matter:** open rooms encrypt in the browser but derive the key from the room id (not server-blind). Password-protected rooms keep the key secret from the host. Hidden rooms stay off the public list and use invite links; add a password for server-blind E2EE.
+
+Anyone who knows the `.onion` address (and invite / password when required) can connect with Tor Browser. No accounts, no phone numbers.
 
 ---
 
@@ -34,12 +36,19 @@ Anyone who knows the `.onion` address and room credentials can connect using Tor
 | Feature | Details |
 |---------|---------|
 | Tor Hidden Service | Automatic `.onion` address generation and management |
-| True E2EE | AES-256-GCM via WebCrypto API — keys never leave the browser |
+| Server-blind E2EE | Password rooms: AES-256-GCM; host cannot derive the room key |
+| Open rooms | Public channels — encrypted in browser; key = f(room id) |
+| ECDH Hybrid (1:1) | Ephemeral P-256 + HKDF; safety number (3×5 decimal) + TOFU verify |
+| Sender binding | Unique `senderId` per room; server overwrites packet identity |
 | Encrypted Database | SQLCipher with DPAPI-protected key (AES-256 at rest) |
 | Real-time Chat | ASP.NET Core SignalR WebSockets |
-| Room System | Create open or password-protected rooms |
-| Message TTL | Auto-expiring messages (30 min / 1 h / 2 h / permanent) |
-| Replay Protection | Per-message fingerprint cache, survives server restarts |
+| Room System | Open, password-protected, and/or hidden (+ invite) |
+| Hidden Rooms | Off public list; join via invite (password still required if locked) |
+| Close room | Creator can block all new joins (invite included); existing members stay |
+| Creator recovery | Browser code binds hidden rooms you create → **My rooms** (Copy / Restore) |
+| Message TTL | Auto-expiring messages (30 min … 1 week / Never) |
+| Secure erasure | `secure_delete` + WAL checkpoint/VACUUM on expiry & room wipe; Manager overwrites DB/key (optional HS keys) |
+| Replay Protection | Fingerprint includes timestamp + AAD; restart-gap reject |
 | GUI Manager | Windows Forms Server Manager — start/stop/monitor with one click |
 | No Accounts | Zero registration — join with a display name only |
 | Privacy-focused storage | No IP logging; no passwords or plaintext; display names and ciphertext envelopes stored in SQLCipher until expiry or deletion |
@@ -54,9 +63,10 @@ Anyone who knows the `.onion` address and room credentials can connect using Tor
 |                                                          |
 |  Password -> PBKDF2 -> roomKey (AES-256) --+            |
 |                   +-> joinProof -----------+--> SignalR  |
+|  1:1 chat: ECDH key pair -> hybridKey ---+              |
 |  Message plaintext -> AES-GCM encrypt ----+             |
 |                         | ciphertext only               |
-+-------------------------+---------------------------------+
++----------------------------------------------------------+
                           | Tor Network (.onion)
 +--------------------------v--------------------------------+
 |                   ChatServer (Host)                      |
@@ -80,30 +90,81 @@ Anyone who knows the `.onion` address and room credentials can connect using Tor
 
 ### End-to-End Encryption (E2EE)
 
-All cryptography runs in the **browser** via the WebCrypto API. The server has zero access to plaintext at any point.
+All cryptography runs in the **browser** via the WebCrypto API. The server never receives plaintext.
 
 **Key Derivation (PBKDF2-SHA256, 210,000 iterations in browser)**
 
-| Purpose | Input material | Salt |
-|---------|----------------|------|
-| Join proof (locked rooms) | Room password | `torchat-join-v1:{roomId}` → 32-byte base64 proof sent to server |
-| E2EE key (locked rooms) | Room password | `torchat-e2ee-v1:{roomId}` → AES-256-GCM key; never sent to server |
-| E2EE key (open rooms) | `torchat-open-material:{roomId}` | `torchat-open-v1:{roomId}` |
+| Purpose | Input material | Salt | Server-blind? |
+|---------|----------------|------|:-------------:|
+| Join proof (locked) | Room password | `torchat-join-v1:{roomId}` | n/a (auth only) |
+| E2EE key (locked) | Room password | `torchat-e2ee-v1:{roomId}` | **Yes** |
+| E2EE key (open) | `torchat-open-material:{roomId}` | `torchat-open-v1:{roomId}` | **No** (key = f(room id)) |
 
 - Separate KDF domains prevent join proof material from being reused as the message key
-- Server stores a **second** PBKDF2-SHA256 hash (100,000 iterations) of the join proof — not the password and not the E2EE key
-- Server-side verification runs off the thread pool (`Task.Run`) so hub threads are not blocked
-- Open rooms still use PBKDF2 (not the raw room ID as the AES key); anyone who knows the room ID can derive the key — users are warned via an amber UI notice
+- Server stores a second PBKDF2 hash of the join proof — not the password and not the E2EE key
+- Open rooms are intentional public channels; UI and join notices state they are **not** server-blind
 
 **Message Encryption (AES-256-GCM)**
 
 ```
-ciphertext = AES-GCM(key=roomKey, plaintext=message, AAD="roomId|senderId|nonce")
+ciphertext = AES-GCM(key=roomKey, plaintext=message,
+             AAD="roomId|senderId|nonce|clientSentAtUnixMs")
 ```
 
-- 12-byte random nonce per message
-- 128-bit GCM authentication tag
-- AAD (Additional Authenticated Data) binds ciphertext to room, sender and nonce — prevents replay and envelope substitution
+- 12-byte random IV per message; 128-bit GCM tag
+- AAD + replay fingerprint include client timestamp (anti-replay / envelope bind)
+- `SendEncrypted` forces `SenderId` from the joined connection (unique per room)
+
+---
+
+### ECDH Hybrid + Safety Numbers (1:1)
+
+When exactly **two members** are in a room, clients use hybrid encryption and show a **safety number**:
+
+1. Ephemeral P-256 ECDH on join (non-extractable private key)
+2. Public keys relayed via `PeerJoined` / `PeerList` (server is blind relay only)
+3. Hybrid key: `HKDF(ECDH shared, salt=roomKeyBytes, info=torchat-ecdh-v1:…)`
+4. **Safety number** (Signal-style compare): `SHA-256("torchat-safety-v1" ‖ sorted SPKI pubs)` → three 5-digit groups. Mark verified / TOFU warn if it changes (sessionStorage)
+5. Group (3+): fallback to roomKey broadcast; hybrid only in 1:1
+
+| Scenario | Encryption | Forward secrecy |
+|----------|-----------|:---:|
+| 1:1 chat | ECDH hybrid | Partial (per session; no Double Ratchet) |
+| 3+ group | PBKDF2 roomKey | No |
+| Password leak | Retained ciphertext decryptable until TTL | Prefer short retention |
+
+There is **no Double Ratchet / Megolm** yet — document cryptoperiod expectations accordingly.
+
+---
+
+### Hidden Rooms
+
+Rooms can be marked **hidden** during creation:
+
+- Not listed in public `GetRooms` / `RoomsUpdated`
+- Join requires a valid **invite token** (and password if the room is locked)
+- Server Manager admin API still lists all rooms
+- Generic `"Cannot join room."` / invite `404` (no existence oracle)
+- Hidden ≠ server-blind by itself — use a **password** for private E2EE
+
+### Close room to new members
+
+Room creators can toggle **Close room to new members** in Settings (`manageToken` / creator recovery code):
+
+- All new `JoinRoom` attempts are rejected with generic `"Cannot join room."` (including old invite links / known room id)
+- People already in the room stay; if they leave, they cannot rejoin until the creator reopens
+- Closing automatically disables the invite link; reopening does **not** re-enable invite (creator must turn it on again)
+- Closing joins is **not** server-blind E2EE — an open room still derives its key from the room id; use a **password** for private E2EE
+
+### Creator recovery code & My rooms
+
+Lobby **Profile** stores a **creator recovery code** in `localStorage` (`torchat-creator-secret`):
+
+- Hidden rooms you create are bound server-side to a hash of this code (`room_creators`)
+- **My rooms** lists those hidden rooms via hub `GetMyRooms(creatorSecret)` — public rooms stay under Public rooms
+- Copy the code and keep it safe; Tor New Identity / clear site data removes it from the browser
+- **Restore** pastes a saved code so My rooms and Settings (invite / close room) work again without the old per-room manage token
+- This is not an E2EE password — it only restores creator listing / manage rights for hidden rooms on that server
 
 ---
 
@@ -114,7 +175,19 @@ ciphertext = AES-GCM(key=roomKey, plaintext=message, AAD="roomId|senderId|nonce"
 - Optional **Full Vanguards** (`Vanguard` checkbox): Python addon + ControlPort for long-lived HS guard-discovery mitigation — see `TorConnection/README_VANGUARDS.txt`
 - All client IP addresses are hidden — even the server operator cannot identify users
 
+**torrc hardening (applied on every start)**
+
+| Option | Value | Purpose |
+|--------|-------|---------|
+| `HiddenServiceVersion` | `3` | v3 onion addresses (56-char, Ed25519 — no v2 fallback) |
+| `SOCKSPort` | `0` | SOCKS proxy disabled — HS process cannot be abused as a proxy |
+| `ClientOnly` | `1` | Prevents the process from acting as a public Tor relay |
+| `SafeLogging` | `1` | Strips potentially identifying info (IP addresses) from Tor logs |
+| `HiddenServiceMaxStreams` | `20` | Max simultaneous streams per rendezvous circuit. SignalR needs 1–3 per client; 20 is a safe ceiling that stops circuit-flooding DoS |
+| `HiddenServiceMaxStreamsCloseCircuit` | `1` | Force-closes a circuit when it exceeds the stream limit, imposing a reconnection cost on the attacker |
+
 ---
+
 
 ### Full Vanguards — Guard-Discovery Protection
 
@@ -178,8 +251,11 @@ The feature is **opt-in** via the `Vanguard` checkbox in Server Manager:
 | Cipher | AES-256-CBC (SQLCipher) |
 | Key storage | Windows DPAPI (`ProtectedData`) |
 | Journal mode | WAL — concurrent readers do not block writers |
-| Tables | `messages`, `rooms`, `server_meta` |
+| Secure delete | `PRAGMA secure_delete=ON`; WAL checkpoint + VACUUM after bulk/room deletes |
+| Tables | `messages` (+ `encryption_version`), `rooms`, `server_meta` |
 | At-rest | `.db`, `.db-wal`, `.db-shm` all encrypted |
+
+**Manager wipe:** Remove SQL data overwrites database files and `db.key.dpapi` (CSPRNG, one pass) before unlink — optional checkbox also wipes Tor Hidden Service keys. Generate new address securely wipes HS keys then issues a new `.onion`. SSD wear-leveling means absolute forensic erasure is not guaranteed; destroying the DB key is the strongest practical step.
 
 ---
 
@@ -242,6 +318,7 @@ All limits are enforced **per ConnectionId**. IP-based limits are intentionally 
 | CreateRoom | 5 / min |
 | SendEncrypted | 60 / min |
 | GetRooms | 30 / min |
+| Invite manage (status / enable / close / rotate) | 20 / min |
 | `/api/*` | 30 / min |
 | Global HTTP | ~600 / min |
 
@@ -305,18 +382,23 @@ What the server operator **can** see:
 TorChat/
 +-- ServerManager/              WinForms GUI (process and Tor lifecycle)
 |   +-- ChatServerProcessHost.cs    Spawns ChatServer, generates admin token
-|   +-- TorHiddenServiceSetup.cs    Manages tor.exe hidden service
+|   +-- TorHiddenServiceSetup.cs    Manages tor.exe hidden service (+ HS key wipe)
+|   +-- SecureFileWipe.cs           CSPRNG overwrite before delete (SQL / HS keys)
 |   +-- VanguardsProcessHost.cs     Optional Full Vanguards (Python addon)
 |
 +-- ChatServer/                 ASP.NET Core 9 backend
-|   +-- Hubs/ChatHub.cs             SignalR hub: auth, replay, rate limiting
+|   +-- Hubs/ChatHub.cs             SignalR hub: join/invite/close, replay, ECDH key relay
 |   +-- Security/ReplayCache.cs     Fingerprint cache + restart-gap protection
-|   +-- Services/TorChatDb.cs       SQLCipher DB: WAL mode, shutdown tracking
-|   +-- Services/RoomRegistryService.cs  Async PBKDF2 authentication
+|   +-- Services/TorChatDb.cs       SQLCipher: WAL, secure_delete, reclaim, migrations
+|   +-- Services/RoomRegistryService.cs  Auth, hidden, joins_closed
+|   +-- Services/RoomInviteService.cs    Invite token + manage/creator secrets
+|   +-- Models/PeerInfo.cs          Peer snapshot model (ECDH key relay)
 |   +-- wwwroot/js/
-|       +-- crypto.js               WebCrypto E2EE: PBKDF2 + AES-GCM
-|       +-- chat-hub.js             SignalR client
-|       +-- app.js                  UI logic and room management
+|       +-- crypto.js               WebCrypto E2EE: PBKDF2 + AES-GCM + ECDH P-256 + HKDF
+|       +-- chat-hub.js             SignalR client (+ invite / close room)
+|       +-- room-invite.js          Invite resolve, Settings (invite + close room)
+|       +-- client-profile.js       Display name + creator recovery code
+|       +-- app.js                  UI logic, My rooms, ECDH, safety number
 |
 +-- TorConnection/              Tor Expert Bundle (tor.exe + geoip data)
 |   +-- Vanguards/              Optional Full Vanguards Python addon (vendored)
