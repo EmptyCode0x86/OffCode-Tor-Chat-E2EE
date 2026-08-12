@@ -52,7 +52,7 @@ Anyone who knows the `.onion` address (and invite / password when required) can 
 | Creator recovery | Browser code binds rooms you create → Settings (and **My rooms** for hidden); Copy / Restore |
 | Message display prefs | Hide date and/or time stamps; pick message time zone (Tor often shows UTC) |
 | Message TTL | Required auto-expiry (30 min … 1 week; default 8 h). Forever retention is not offered |
-| E2EE attachments | FileSeal: chunked AES-GCM (max 32 MiB); small E2EE manifest via `SendEncrypted`; server stores opaque chunks only |
+| E2EE attachments | FileSeal: chunked AES-GCM (max 32 MiB); small E2EE manifest via `SendEncrypted`; server stores opaque chunks only. Images: client strips EXIF/XMP/comments (JPEG/PNG/GIF/WebP) in-browser before encrypt — no canvas when possible (Tor Browser fingerprinting) |
 | Secure erasure | `secure_delete` + WAL checkpoint/VACUUM on expiry & room wipe; Manager overwrites DB/key (optional HS keys) |
 | Replay Protection | Fingerprint includes client timestamp; freshness window + restart-gap reject |
 | CORS lock | `TORCHAT_ALLOWED_ONION` + live `POST /api/admin/cors-onion` (Manager; no ChatServer restart). Fail-closed: empty allowlist denies every `.onion` origin until locked |
@@ -286,8 +286,8 @@ Full Vanguards (the [mikeperry-tor/vanguards](https://github.com/mikeperry-tor/v
 
 | Layer | What it does |
 |-------|-------------|
-| **L2 vanguards** | Pins a rotating set of ~4 middle-layer nodes; changes every 1–8 days |
-| **L3 vanguards** | Pins a rotating set of ~8 pre-guard nodes; changes every 1–8 hours |
+| **L2 vanguards** | Pins a rotating set of ~4 middle-layer nodes; addon default lifetime 24–1080 h (~1–45 days) |
+| **L3 vanguards** | Pins a rotating set of ~8 pre-guard nodes; addon default lifetime 1–48 hours |
 
 By pinning layers, the number of relays that ever observe the hidden service's traffic is drastically reduced and controlled — making large-scale guard-discovery statistically infeasible over the lifetime of the service.
 
@@ -388,6 +388,7 @@ Tor Browser clients cannot call these — only Server Manager (with the env toke
 | Request size limits | Kestrel / SignalR ≈ **4 MiB**; `ClientTimeoutInterval` **5 min** (large Tor image frames block pings mid-transfer) |
 | Server Header | Removed (`AddServerHeader = false`) |
 | DOM Safety | All user content via `textContent` / `createElement` — no `innerHTML` |
+| Image metadata strip | Before FileSeal encrypt: JPEG APP1/COM/APP13, PNG ancillary chunks, GIF XMP comments, WebP EXIF/XMP — binary strip in `file-attach.js` (canvas only if over size budget) |
 | No Third Parties | No analytics, CDN resources, or WebRTC. Creator recovery code may live in `localStorage` (not an E2EE secret) |
 | Message cap | Max 500 ciphertext rows per room (oldest trimmed) |
 | SRI check | `tools/verify-sri.ps1` — exit 1 on hash mismatch |
