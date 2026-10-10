@@ -2,7 +2,7 @@
 
 # 🧅 OffCode Tor-Chat E2EE
 
-**Anonymous - End-to-End Encrypted - Self-Hosted Chat over Tor Hidden Services**
+**Anonymous chat over Tor Hidden Services with browser E2EE**
 
 [![Platform](https://img.shields.io/badge/platform-Windows-blue?logo=windows)](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
 [![.NET](https://img.shields.io/badge/.NET-9.0-purple?logo=dotnet)](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
@@ -10,7 +10,7 @@
 [![Encryption](https://img.shields.io/badge/encryption-AES--256--GCM-green)](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
 [![Source](https://img.shields.io/badge/source%20code-$49-orange)](https://www.dev-offcode.com/TorChatPage.html)
 
-*Self-hosted anonymous chat over Tor. Password-protected rooms are server-blind E2EE; open rooms are public encrypted channels (key = room id).*
+*Self-hosted anonymous chat over Tor. Open the `.onion` in Tor Browser. Password rooms are server-blind against a passive relay; open rooms are public encrypted channels (key = room id).*
 
 </div>
 
@@ -22,12 +22,12 @@ TorChat is a **self-hosted anonymous chat server** that runs entirely over the T
 
 1. **Tor Network** — hides both the server and users’ real IP addresses
 2. **Optional Full Vanguards** — hardens long-lived hidden services against guard-discovery / traffic-analysis attacks
-3. **End-to-End Encryption** — messages are encrypted in the browser (AES-256-GCM) before send; the server stores ciphertext only
+3. **End-to-End Encryption** — the Tor Browser page encrypts messages (AES-256-GCM) before send; the relay stores ciphertext only
 4. **Encrypted Storage** — data at rest is protected by SQLCipher (AES-256)
 
-**Room types matter:** open rooms encrypt in the browser but derive the key from the room id (not server-blind). Password-protected rooms keep the key secret from the host. Hidden rooms stay off the public list and use invite links; add a password for server-blind E2EE.
+**Room type matters:** open rooms derive their key from the room id and are not server-blind. Password-protected rooms keep the key secret from a **passive** relay. A host that serves the page can still replace JavaScript (SRI is not an independent anchor). Hidden rooms stay off the public list and require an invite; add a password for relay-blind message content.
 
-Anyone who knows the `.onion` address (and invite / password when required) can connect with Tor Browser. No accounts, no phone numbers.
+Anyone who knows the `.onion` address (and invite / password when required) can connect in **Tor Browser**. No accounts, no phone numbers.
 
 ---
 
@@ -35,30 +35,35 @@ Anyone who knows the `.onion` address (and invite / password when required) can 
 
 | Feature | Details |
 |---------|---------|
-| Tor Hidden Service | Automatic `.onion` address generation and management |
-| Server-blind E2EE | Password rooms: AES-256-GCM; host cannot derive the room key |
+| Tor Hidden Service | Automatic `.onion` (v3); intro DoS + HS PoW on Tor ≥ 0.4.8 |
+| Server-blind E2EE | Password rooms: AES-256-GCM; a passive relay cannot derive the room key |
 | Open rooms | Public channels — encrypted in browser; key = f(room id) |
-| ECDH Hybrid (1:1) | Locked 1:1: ephemeral P-256 + HKDF; safety number (3×5 decimal) + TOFU verify |
+| ECDH Hybrid (1:1) | Locked 1:1: ephemeral P-256 + HKDF; safety number (8×5 decimal, 128-bit) + TOFU verify |
 | Sender binding | Unique `senderId` per room; server overwrites packet identity |
 | Encrypted Database | SQLCipher with DPAPI-protected key (AES-256 at rest) |
 | Real-time Chat | ASP.NET Core SignalR WebSockets |
 | Room System | Open, password-protected, and/or hidden (+ invite) |
 | Hidden Rooms | Off public list; join via invite (password still required if locked) |
 | Close room | Creator can block all new joins (invite included); existing members stay; **creator can rejoin** with recovery / manage token |
+| Max members | Optional online cap (2–50); default off. New joins rejected when full; people already in stay |
 | Lock later | Open rooms can be locked once with a password (server-blind E2EE); wipes open history |
 | Delete room | Creator can wipe the room + ciphertext from the server (secure_delete + VACUUM) |
 | Slow mode | Optional per-room send cooldown (1 min … 4 h); applies to everyone including the creator |
 | Disable attachments | Creator can turn off file/image sending in a room (text still allowed); server size-gates ciphertext |
+| Announcement | Optional read-only mode; only the room creator can send (default off) |
 | Creator recovery | Browser code binds rooms you create → Settings (and **My rooms** for hidden); Copy / Restore |
 | Message display prefs | Hide date and/or time stamps; pick message time zone (Tor often shows UTC) |
 | Message TTL | Required auto-expiry (30 min … 1 week; default 8 h). Forever retention is not offered |
 | E2EE attachments | FileSeal: chunked AES-GCM (max 32 MiB); small E2EE manifest via `SendEncrypted`; server stores opaque chunks only. Images: client strips EXIF/XMP/comments (JPEG/PNG/GIF/WebP) in-browser before encrypt — no canvas when possible (Tor Browser fingerprinting) |
 | Secure erasure | `secure_delete` + WAL checkpoint/VACUUM on expiry & room wipe; Manager overwrites DB/key (optional HS keys) |
 | Replay Protection | Fingerprint includes client timestamp; freshness window + restart-gap reject |
+| Pinned message | Room creator pins one ciphertext envelope (right-click / Shift+F10). Server stores a pointer only; members decrypt in the browser. TTL still applies |
 | CORS lock | `TORCHAT_ALLOWED_ONION` + live `POST /api/admin/cors-onion` (Manager; no ChatServer restart). Fail-closed: empty allowlist denies every `.onion` origin until locked |
-| Clearnet warning | Client banner if page host is not `.onion` / localhost (does not block chat) |
-| SRI verify | `tools/verify-sri.ps1` checks `index.html` hashes against wwwroot JS |
-| GUI Manager | Windows Forms Server Manager — Start ChatServer first, then Tor; Copper/Forge UI |
+| Clearnet / insecure host | Fail-closed overlay unless host is loopback (`localhost`, `127.0.0.1`, `::1`) or a Tor v3 `.onion`; requires `isSecureContext` + `crypto.subtle` before SignalR |
+| Trusted local client (optional) | `TorChat.ClientHost` can embed the same UI on loopback; default is the `.onion` page in Tor Browser |
+| SRI verify | `tools/verify-sri.ps1` checks `index.html` hashes against wwwroot JS (build consistency, not a malicious-host trust anchor) |
+| Disable Room Creation | Manager checkbox; blocks onion Create room immediately; Manager Create room still works |
+| GUI Manager | Windows Forms: ChatServer + Tor HS; public rooms; website create cap/disable; operator recovery (Admin key → Profile Restore); Save `config.ini` + optional Windows logon start |
 | Docker host | Optional compose stack: ChatServer + Tor HS (no clearnet host ports) |
 | No Accounts | Zero registration — join with a display name only |
 | Privacy-focused storage | No IP logging; no passwords or plaintext; display names and ciphertext envelopes stored in SQLCipher until expiry or deletion |
@@ -70,6 +75,7 @@ Anyone who knows the `.onion` address (and invite / password when required) can 
 ```
 +----------------------------------------------------------+
 |                   Tor Browser (User)                     |
+|  Opens http://ADDRESS.onion/                             |
 |                                                          |
 |  Password -> PBKDF2 -> roomKey (AES-256) --+            |
 |                   +-> joinProof -----------+--> SignalR  |
@@ -81,6 +87,7 @@ Anyone who knows the `.onion` address (and invite / password when required) can 
 +--------------------------v--------------------------------+
 |                   ChatServer (Host)                      |
 |                                                          |
+|  Serves chat UI + SignalR/API                            |
 |  Receives: ciphertext blob - NEVER decrypts it           |
 |  Stores:   encrypted payload in SQLCipher DB             |
 |  Broadcasts: same ciphertext to room members             |
@@ -100,14 +107,14 @@ Anyone who knows the `.onion` address (and invite / password when required) can 
 
 ### End-to-End Encryption (E2EE)
 
-All cryptography runs in the **browser** via the WebCrypto API. The server never receives plaintext.
+Default production use: Server Manager publishes a Hidden Service; guests open `http://ADDRESS.onion/` in **Tor Browser**. Encryption happens in the browser via WebCrypto. A **passive** relay does not receive the room password, room key, or plaintext in password rooms. A host that serves the HTML can replace JavaScript and SRI hashes together. Optional `TorChat.ClientHost` keeps a local copy of the UI. Open rooms remain public channels and are not server-blind.
 
 **Key Derivation (PBKDF2-SHA256 — see [docs/PBKDF_600kCrypt.md](docs/PBKDF_600kCrypt.md))**
 
 | Purpose | Input material | Salt | Iterations | Server-blind? |
 |---------|----------------|------|------------|:-------------:|
 | Join proof (locked) | Room password | `torchat-join-v2:{roomId}` | **600_000** (browser) | n/a (auth only) |
-| E2EE key (locked) | Room password | `torchat-e2ee-v2:{roomId}` | **600_000** | **Yes** |
+| E2EE key (locked) | Room password | `torchat-e2ee-v2:{roomId}` | **600_000** | **Yes, with trusted client** |
 | E2EE key (open) | `torchat-open-material-v2:{roomId}` | `torchat-open-v2:{roomId}` | **600_000** | **No** (key = f(room id)) |
 | Server join hash | Client joinProof (base64) | 32-byte CSPRNG | **250_000** | Stored as `250000:salt:hash` |
 
@@ -135,10 +142,12 @@ ciphertext = AES-GCM(key=roomKey|hybridKey, plaintext=message,
 When exactly **two members** are in a **password** room, clients use hybrid encryption and show a **safety number**:
 
 1. Ephemeral P-256 ECDH on join (non-extractable private key)
-2. Public keys relayed via `PeerJoined` / `PeerList` (server is blind relay only)
+2. Public keys relayed via `PeerJoined` / `PeerList` (the relay sees them; it does not receive private ECDH keys when the verified local client is used)
 3. Hybrid key: `HKDF(ECDH shared, salt=roomKeyBytes, info=torchat-ecdh-v1:…)`
-4. **Safety number** (Signal-style compare): `SHA-256("torchat-safety-v1" ‖ sorted SPKI pubs)` → three 5-digit groups. Mark verified / TOFU warn if it changes (sessionStorage)
+4. **Safety number** (Signal-style compare): `SHA-256("torchat-safety-v1" ‖ sorted SPKI pubs)` → eight 5-digit groups from the first 16 digest bytes (128-bit display; `hashHex` is the full SHA-256). Mark verified / TOFU warn if it changes (`sessionStorage`, not `localStorage`)
 5. Locked group (3+): fallback to password roomKey broadcast (`pbkdf2-v2`); hybrid only in 1:1
+
+After a reload or a new join the client generates a new P-256 pair (session PFS). Stored `ecdh-hybrid-v1` ciphertext from a prior ephemeral session cannot decrypt; the UI shows a previous-session placeholder. `pbkdf2-v2` history still opens with the room password. ECDH private keys are non-extractable and are not written to `localStorage` / `sessionStorage` / IndexedDB.
 
 | Scenario | Encryption | Forward secrecy |
 |----------|-----------|:---:|
@@ -158,7 +167,7 @@ Rooms can be marked **hidden** during creation:
 - Not listed in public `GetRooms` / `RoomsUpdated`
 - Join requires a valid **invite token** (and password if the room is locked)
 - Server Manager admin API still lists all rooms
-- Generic `"Cannot join room."` / invite `404` (error **text** does not leak existence). `JoinRoom` still runs hidden/closed gates before the dummy PBKDF2 path, so **response timing** can distinguish those rooms from missing ones
+- Generic `"Cannot join room."` / invite `404` (error **text** does not leak existence). The hidden/closed gates also pay the same dummy PBKDF2 cost as every other denial, so **response timing** does not distinguish those rooms from missing ones either
 - Hidden ≠ server-blind by itself — use a **password** for private E2EE
 
 ### Close room to new members
@@ -173,6 +182,16 @@ Room creators (public or hidden) can toggle **Close room to new members** in Set
 - Reopening does **not** re-enable invite (creator must turn it on again)
 - Closing joins is **not** server-blind E2EE — an open room still derives its key from the room id; use a **password** for private E2EE
 - Tor Browser New Identity / clear site data removes the recovery code from the browser; Copy / Restore it or you lose creator rejoin and Settings
+
+### Max members (online cap)
+
+Creators can optionally enable **Limit how many can be in the room** in Settings (default **off**):
+
+- When on, set a number **2–50**. New `JoinRoom` attempts are rejected once that many people are **online**
+- People already in the room stay if you lower the cap; they are not kicked
+- Applies to **everyone, including the room creator** (no owner bypass)
+- Public rooms: `"Room is full."` Hidden rooms: generic `"Cannot join room."` (no extra existence leak)
+- Policy is stored per room in SQLite (`max_members`; `0` = unlimited). Changing the setting broadcasts a short system notice
 
 ### Lock room later (one-way password)
 
@@ -207,12 +226,33 @@ Creators can toggle **Disable file and image sending** in Room Settings (default
 - Already-received attachments in history remain visible; only new sends are blocked
 - Policy is stored per room in SQLite (`attachments_disabled`)
 
+### Announcement (read-only)
+
+Creators can optionally enable **Only the room creator can send** in Settings (default **off**):
+
+- When on, members can read history but cannot send text or FileSeal attachments
+- The creator can still send (slow mode still applies). Owner proof is checked on `SendEncrypted` / `BeginAttachmentUpload` (`manageToken` / recovery code) and is **not** stored with ciphertext
+- Members get a disabled composer and a toast if they try; all members receive `ReadOnlyPolicy` on join and when the creator toggles
+- Policy is stored per room in SQLite (`read_only`)
+
+### Pinned messages
+
+The room **creator** can pin **one** chat message at a time (new pin replaces the previous):
+
+- In the room, right-click a message (or **Shift+F10** / long-press) → **Pin message** / **Unpin message**. The menu is an in-app overlay (`room-pin.js`), not a document-wide native context menu
+- A **Pinned** bar above the transcript shows a short decrypted preview; click it to scroll to the original bubble
+- Hub `PinMessage` / `UnpinMessage` require **presence in the room** plus owner proof (`manageToken` / recovery code). The client sends only `nonce` + `clientSentAtUnixMs` — **never plaintext**. The server copies the already-stored ciphertext envelope and broadcasts `PinState` to the group. Joiners get `PinState` after history replay
+- Identification is `(roomId, nonce, clientSentAtUnixMs)` so the pin cannot bind to a different payload. `gk-wrap-v1` is live-relay only and cannot be pinned
+- No pinner identity and no extra pin timestamp (the envelope already has UTC-minute clocks)
+- The pin dies with the message: TTL cleanup CASCADE-deletes `room_pins`; wipe / lock-later history clear too. The 500-message cap **does not** trim the pinned row while it is still unexpired
+- Owner-proof failures use **`Cannot manage invite.`**; missing / other-room / expired / wrap use **`Cannot pin message.`** Rate limit is the invite-manage budget (20 / min). Open rooms remain host-readable by design (`key = f(roomId)`)
+
 ### Creator recovery code & My rooms
 
 Lobby **Profile** stores a **creator recovery code** in `localStorage` (`torchat-creator-secret`):
 
-- Treat it as a **capability token**, not an E2EE secret: possession proves room ownership on this server
-- Capabilities include: Room **Settings** (close joins, disable attachments, slow mode, invite, lock, delete), **My rooms** listing, restore toast with `IncludePublic`, and **rejoin when joins are closed** / hidden without invite
+- Treat it as a **capability token**, not an E2EE secret: possession proves room ownership on this server. Leave clears the chat transcript in the DOM; it does **not** delete this code (use Tor Browser **New Identity** to drop the profile)
+- Capabilities include: Room **Settings** (close joins, max members, disable attachments, announcement, slow mode, invite, lock, delete), **pin one message** in the room, **My rooms** listing, restore toast with `IncludePublic`, and **rejoin when joins are closed** / hidden without invite
 - Server stores only a **SHA-256** hash of the code (`room_creators.creator_hash`) — same model as manage tokens. Intentional for high-entropy tokens (not PBKDF2; join proofs use PBKDF2 because they derive from user passwords)
 - **Every** room you create (public or hidden) is bound server-side to that hash plus a per-room `manageToken`
 - **Generate new code** (Profile) calls hub `RebindCreatorSecret`: updates all bound rooms to the new hash and **immediately invalidates** the old code. Plain **Restore** only writes `localStorage` and does **not** revoke an old code on the server
@@ -246,13 +286,13 @@ Every message must expire. Send row **Message expiry** offers **30 min … 1 wee
 
 - **Server Manager:** ChatServer binds exclusively to `127.0.0.1` — no clearnet/LAN bind
 - **Docker:** ChatServer listens on `0.0.0.0:8080` *inside* the compose network only (no host `ports:`); Tor HS is the only public path
-- `tor.exe` is managed by Server Manager (Expert Bundle under `TorConnection/TorBundle/`)
-- **Start ChatServer before enabling Tor** — Manager blocks Tor ON until ChatServer is running (and waits for `/api/health` before “ready”)
+- `tor.exe` is managed by Server Manager (Expert Bundle under `TorConnection/TorBundle/`). **SHA-256 pin** in `TorConnection/tor-expert-bundle.pin.json` — currently **0.4.9.13** (`tor.exe` `90bbdcafd586feea608a5e9b7d3959f4ee194f7770755cfde8fab240e9773ad1`). Manager **does not download** Tor. A replaced or unpinned binary fails closed. This pin is ≥ 0.4.8 so HS intro DoS + Proof-of-Work are written to torrc.
+- **Start ChatServer before enabling Tor** — Manager blocks Tor ON until ChatServer is running (and waits for `/api/health` on the admin port before “ready”)
 - When the HS hostname is known, Manager locks CORS to that onion via `POST /api/admin/cors-onion` (and `TORCHAT_ALLOWED_ONION` on next ChatServer start)
 - Optional **Full Vanguards** (`Vanguard` checkbox): Python addon + ControlPort for long-lived HS guard-discovery mitigation — see `TorConnection/README_VANGUARDS.txt`
 - All client IP addresses are hidden — even the server operator cannot identify users
 - **Generate new address** rotates the Hidden Service identity (wipes HS keys). Room/SQL data is separate (**Remove SQL data**)
-- Browser soft-warns if the page was opened outside `.onion` / localhost (clearnet proxy exposure risk)
+- Chat UI **blocks** unless the page host is loopback (`localhost`, `127.0.0.1`, `::1`) or a Tor **v3** `.onion`, **and** Web Cryptography is available (`isSecureContext` + `crypto.subtle`). Overlay + `<noscript>` are fail-closed (`secure-boot.js`). Naive `*.onion` suffixes such as `127.0.0.1.onion` are rejected. Same-origin reverse proxies that rewrite HTML and drop SRI are out of scope
 
 **torrc hardening (applied on every start)**
 
@@ -264,6 +304,13 @@ Every message must expire. Send row **Message expiry** offers **30 min … 1 wee
 | `SafeLogging` | `1` | Strips potentially identifying info (IP addresses) from Tor logs |
 | `HiddenServiceMaxStreams` | `20` | Max simultaneous streams per rendezvous circuit. SignalR needs 1–3 per client; 20 is a safe ceiling that stops circuit-flooding DoS |
 | `HiddenServiceMaxStreamsCloseCircuit` | `1` | Force-closes a circuit when it exceeds the stream limit, imposing a reconnection cost on the attacker |
+| `HiddenServiceEnableIntroDoSDefense` | `1` | Rate-limit INTRODUCE2 at honest intro points (Tor Proposal 305). Written only if `tor --version` ≥ 0.4.8 |
+| `HiddenServiceEnableIntroDoSBurstPerSec` | `200` | Tor man-page default intro burst |
+| `HiddenServiceEnableIntroDoSRatePerSec` | `25` | Tor man-page default intro rate |
+| `HiddenServicePoWDefensesEnabled` | `1` | Equi-X v1 Proof-of-Work (Proposal 327). Dormant until the HS queue is overloaded; Tor Browser already has the client |
+| `HiddenServicePoWQueueRate` | `250` | Tor man-page default PoW queue drain rate |
+| `HiddenServicePoWQueueBurst` | `2500` | Tor man-page default PoW queue burst |
+| `HiddenServicePort` | `80` + chat port | Only these two reach ChatServer. The admin port (`TORCHAT_ADMIN_PORT`) is deliberately **never** mapped, which is what keeps the admin API off the `.onion` |
 
 ---
 
@@ -331,10 +378,10 @@ The feature is **opt-in** via the `Vanguard` checkbox in Server Manager:
 | Key storage | Windows: DPAPI (`ProtectedData` → `db.key.dpapi`). Linux/Docker: `TORCHAT_DB_KEY` (64 hex), `TORCHAT_DB_KEY_FILE`, or `db.key` in the data dir |
 | Journal mode | WAL — concurrent readers do not block writers |
 | Secure delete | `PRAGMA secure_delete=ON`; WAL checkpoint + VACUUM after bulk/room deletes |
-| Tables | `messages` (+ `encryption_version`), `rooms`, `server_meta`, `room_invites`, `room_manage_secrets`, `room_creators`, `attachment_transfers` |
+| Tables | `messages`, `rooms`, `server_meta`, `room_invites`, `room_manage_secrets`, `room_creators`, `room_pins`, `attachment_transfers` |
 | At-rest | `.db`, `.db-wal`, `.db-shm` all encrypted |
 
-**Manager wipe:** Remove SQL data overwrites database files and `db.key.dpapi` (CSPRNG, one pass) before unlink — optional checkbox also wipes Tor Hidden Service keys. Generate new address securely wipes HS keys then issues a new `.onion`. SSD wear-leveling means absolute forensic erasure is not guaranteed; destroying the DB key is the strongest practical step.
+**Manager wipe:** Remove SQL data overwrites database files and `db.key.dpapi` (CSPRNG, one pass) before unlink — optional checkbox also wipes Tor Hidden Service keys. It does **not** delete the operator recovery file (`%LocalAppData%\TorChat_ServerManager\operator_creator.dpapi`). Generate new address securely wipes HS keys then issues a new `.onion`. SSD wear-leveling means absolute forensic erasure is not guaranteed; destroying the DB key is the strongest practical step.
 
 ---
 
@@ -346,7 +393,7 @@ Every received message is fingerprinted:
 ```
 fingerprint = SHA256( UTF-8 bytes of roomId + "|" + nonce + "|" + payloadB64 + "|" + clientSentAtUnixMs )
 ```
-Identical fingerprints within the in-memory window (~120 s) are rejected. Packets older than **120 seconds** (or more than **60 seconds** in the future) are also rejected by the hub freshness checks.
+Identical fingerprints within the in-memory window (~120 s) are rejected. Packets older than **120 seconds** (or more than **60 seconds** in the future) are also rejected. Those freshness and replay failures all return the generic hub error **`Message rejected.`** so they cannot be used as a millisecond clock oracle. `ClientSentAtUnixMs` is floored to the UTC minute in the browser before AES-GCM AAD; hub `SentAtUnixMs` / `ExpireAtUnixMs` / room `CreatedAtUnixMs` use the same grain.
 
 **Restart-gap protection**
 
@@ -365,11 +412,16 @@ Admin HTTP APIs are protected by a cryptographically generated token:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/rooms` | Manager room list (metadata) |
+| `GET /api/rooms` | Manager room list (metadata, including hidden) |
+| `POST /api/rooms` | Create open public room (`roomId` + operator `creatorSecret`) |
 | `DELETE /api/rooms/{id}` | Wipe room + ciphertext |
+| `PUT /api/admin/room-policy` | Live website CreateRoom disable + public-room cap |
 | `POST /api/admin/cors-onion?onion=` | Lock live CORS allowlist to HS hostname |
+| `GET /api/health` | Manager readiness gate |
 
-Tor Browser clients cannot call these — only Server Manager (with the env token) can.
+Tor Browser clients cannot call these — only Server Manager (with the env token) can. Hub `CreateRoom` from the onion is separate and follows the website policy.
+
+**Separate admin port.** Server Manager reserves a second free loopback port and passes it as `TORCHAT_ADMIN_PORT`; the Hidden Service publishes only port 80 and the chat port, never this one. On the Tor-facing port the admin routes above return **404**, so they do not even appear to exist over the `.onion` — a bare 401 would otherwise fingerprint the server and expose the token to guessing. IP filtering cannot do this job: the local `tor.exe` forwards every visitor from `127.0.0.1`, so the listening port is the only thing that distinguishes Manager from a Tor client. If `TORCHAT_ADMIN_PORT` is unset (plain `dotnet run`, integration tests), admin routes answer on every bound port as before.
 
 ---
 
@@ -377,27 +429,29 @@ Tor Browser clients cannot call these — only Server Manager (with the env toke
 
 | Control | Implementation |
 |---------|---------------|
-| Content Security Policy | `default-src 'self'`, `script-src 'self'`, `style-src 'self'`, `img-src 'self' data: blob:`, `connect-src 'self'`, `font-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'` |
+| Content Security Policy | ChatServer (Development UI): `connect-src 'self'` plus the other `'self'` directives. ClientHost: same, with `connect-src 'self' http://<v3-onion> ws://<v3-onion>` for the selected relay |
 | Subresource Integrity | `integrity=sha256-...` on SignalR + app scripts — browser-enforced |
 | Security Headers | `X-Frame-Options: DENY`, nosniff, Referrer-Policy no-referrer, COOP, CORP |
 | Permissions-Policy | `geolocation=()`, `microphone=()`, `camera=()` |
-| Cache Control | `Cache-Control: no-store` on HTML and `/js/*` |
+| Cache Control | `Cache-Control: no-store` on HTML and `/js/*`; `/css/*` and `/fonts/*` `immutable` (already versioned with `?v=` in `index.html`) |
+| Host fingerprint headers | `Date` coarsened to whole minutes; hub `SentAt`/`ExpireAt`/`CreatedAt` and client AAD `ClientSentAt` also UTC-minute; `ETag` / `Last-Modified` stripped from static files and the `index.html` fallback |
 | AllowedHosts | `127.0.0.1;localhost;*.onion` |
 | CORS | Loopback always; `.onion` via `CorsOnionAllowlist` (`TORCHAT_ALLOWED_ONION` and/or live admin POST). Fail-closed: empty allowlist denies every `.onion` origin until locked. No `AllowCredentials` |
-| Clearnet banner | Soft UI warning when host is not `.onion` / `127.0.0.1` / `localhost` |
+| Clearnet / Web Crypto gate | Fail-closed overlay: v3 `.onion` or loopback only; `isSecureContext` + `crypto.subtle` (SHA-256 probe) before SignalR. Reverse proxies that rewrite HTML and drop SRI are out of scope |
 | Request size limits | Kestrel / SignalR ≈ **4 MiB**; `ClientTimeoutInterval` **5 min** (large Tor image frames block pings mid-transfer) |
 | Server Header | Removed (`AddServerHeader = false`) |
-| DOM Safety | All user content via `textContent` / `createElement` — no `innerHTML` |
+| DOM Safety | All user content via `textContent` / `createElement` — no `innerHTML`. Leave / ForceLeave clears `#messages`, drafts, safety-number text, and blob image URLs; this is not a forensic memory wipe and not account logout |
 | Image metadata strip | Before FileSeal encrypt: JPEG APP1/COM/APP13, PNG ancillary chunks, GIF XMP comments, WebP EXIF/XMP — binary strip in `file-attach.js` (canvas only if over size budget) |
 | No Third Parties | No analytics, CDN resources, or WebRTC. Creator recovery code may live in `localStorage` (not an E2EE secret) |
-| Message cap | Max 500 ciphertext rows per room (oldest trimmed) |
-| SRI check | `tools/verify-sri.ps1` — exit 1 on hash mismatch |
+| Message cap | Max 500 ciphertext rows per room (oldest trimmed). The **pinned** row is kept until TTL/wipe |
+| SRI check | `tools/verify-sri.ps1` — exit 1 on hash mismatch (wwwroot vs `index.html`; not independent of HTML) |
+| Trusted client verify | `tools/verify-trusted-client.ps1` / `gh attestation verify` on a `trusted-client-v*` ClientHost artifact before running it |
 
 ---
 
 ### Rate Limiting
 
-All limits are enforced **per ConnectionId**. IP-based limits are intentionally not used because all Tor traffic arrives from `127.0.0.1`.
+Limits are enforced **per ConnectionId** unless marked server-wide. IP-based limits are intentionally not used because all Tor traffic arrives from `127.0.0.1`.
 
 | Endpoint | Limit |
 |----------|-------|
@@ -411,10 +465,13 @@ All limits are enforced **per ConnectionId**. IP-based limits are intentionally 
 | RebindCreatorSecret | 5 / min |
 | AttachBegin | 10 / min |
 | Attach Complete / Cancel | No hub limiter (HTTP chunk PUT/GET still 240 / min) |
-| Invite manage (status / enable / close / rotate / send interval / attachments / lock / delete) | 20 / min |
+| Invite manage (status / enable / close / rotate / send interval / attachments / max members / read-only / lock / delete / **pin / unpin**) | 20 / min |
 | `/api/health`, `/api/invite/*`, admin APIs | 30 / min |
 | `/api/attachments/*` chunk PUT/GET | 240 / min |
 | Global HTTP | ~600 / min |
+| `/api/invite/*` server-wide | 120 / min (in addition to the per-connection limit above) |
+
+The `/api/invite` ceiling is **not** per connection: a per-connection partition resets whenever a client opens a new circuit, so it cannot bound the total cost of invite-token enumeration. 120 / min is generous on purpose — honest use is one lookup per guest.
 
 ---
 
@@ -423,7 +480,8 @@ All limits are enforced **per ConnectionId**. IP-based limits are intentionally 
 | Component | Technology |
 |-----------|-----------|
 | Backend | ASP.NET Core 9, SignalR |
-| Frontend | Vanilla HTML/CSS/JS, WebCrypto API |
+| Frontend | Vanilla HTML/CSS/JS, WebCrypto API (served from ChatServer; optional ClientHost embed) |
+| Trusted client (optional) | `TorChat.ClientHost` (.NET 10 loopback host) |
 | Database | SQLite + SQLCipher (AES-256) |
 | Anonymity | Tor Hidden Service (tor.exe bundled) |
 | GUI | Windows Forms (.NET 9) |
@@ -439,7 +497,19 @@ All limits are enforced **per ConnectionId**. IP-based limits are intentionally 
 
 - Windows 10 or later (64-bit)
 - [.NET 9 Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/9.0) (for ChatServer)
-- [Tor Browser](https://www.torproject.org/) (to connect via .onion)
+- [Tor Browser](https://www.torproject.org/) (open the `.onion` UI; includes the HS PoW client)
+- Tor Expert Bundle at `TorConnection/TorBundle/tor/tor.exe`. Server Manager **refuses** a binary that does not match `TorConnection/tor-expert-bundle.pin.json`. It does **not** download Tor (no clearnet fetch at HS start).
+
+| Pin (Windows x86_64) | Value |
+|----------------------|--------|
+| Tor version | **0.4.9.13** (Expert Bundle `15.0.24`) |
+| Archive | `tor-expert-bundle-windows-x86_64-15.0.24.tar.gz` |
+| Archive SHA-256 | `e9dc6ccc93cd6afa507193f4de284d6424233ff5102155cd2c94b259e8a22b65` ([sha256sums-signed-build.txt](https://dist.torproject.org/torbrowser/15.0.24/sha256sums-signed-build.txt)) |
+| `tor.exe` SHA-256 | `90bbdcafd586feea608a5e9b7d3959f4ee194f7770755cfde8fab240e9773ad1` |
+| Official download | [torproject.org/download/tor](https://www.torproject.org/download/tor/) |
+| Verify | GPG on SUMS + archive (key `EF6E286DDA85EA2A4BA7DE684E2C6E8793298290`) — [Tor verifying](https://support.torproject.org/little-t-tor/getting-started/verifying/) |
+
+Setup steps: [TorConnection/README_TOR_BUNDLE.txt](TorConnection/README_TOR_BUNDLE.txt). Intro DoS + PoW need Tor ≥ 0.4.8 (this pin is 0.4.9.13).
 - Server Manager is self-contained — no separate .NET installation required
 
 **Docker (Linux host / VPS)**
@@ -460,14 +530,16 @@ All limits are enforced **per ConnectionId**. IP-based limits are intentionally 
 5. Click **Start** — ChatServer launches (Production; wait until status shows Running)
 6. Click **Tor Connection ON** — requires ChatServer first; your `.onion` address appears
 7. Share the `.onion` address with your contacts
-8. Open it in **Tor Browser** and create or join a room
+8. Open `http://YOURADDRESS.onion/` in **Tor Browser** (Go Site copies it)
+
+**Public rooms (Manager):** Create room (open, name only). **Maximum Number of Rooms** caps website public creates; **Disable Room Creation** blocks all onion `CreateRoom` immediately (Manager create still works). **Admin key** is the operator recovery (not in `config.ini`): copy into onion **Profile → Restore** for Settings on those rooms. The **i** button explains Restore. **Save** writes `config.ini` (cap, disable, startup, Tor, ports). **Start server on startup** + Save registers Windows logon (HKCU Run); uncheck + Save removes it.
 
 > First Tor bootstrap may take 30–60 seconds depending on network conditions.  
-> Free binary release does not ship `config.ini` — Server Manager creates it on save/first use.
+> Free binary release does not ship `config.ini` — Server Manager creates it on Save. Admin key is DPAPI under LocalAppData, not the ini.
 
 ### Docker — ChatServer + Tor
 
-For headless / VPS hosting without Server Manager. ChatServer is **not** published to the host; only the Tor Hidden Service is reachable.
+For headless / VPS hosting without Server Manager. ChatServer is **not** published to the host; only the Tor Hidden Service is reachable. Open the `.onion` in Tor Browser.
 
 ```bash
 cd docker
@@ -484,8 +556,8 @@ Full steps and security notes: **[docker/README.md](docker/README.md)**.
 
 ## Privacy Guarantees
 
-What the server operator **cannot** see (password / locked rooms):
-- Message plaintext (server-blind E2EE — host cannot derive the room key)
+What the relay cannot see in password rooms **when the browser client is unmodified**:
+- Message plaintext or the room key (server-blind E2EE under this client trust assumption)
 - Client IP addresses (all Tor traffic arrives from loopback to ChatServer)
 - User accounts (none — display names only)
 
@@ -494,6 +566,8 @@ What the server operator **can** see:
 - When connections are made and dropped
 - **Open-room** ciphertext **and** plaintext capability — key = `f(roomId)`; treat open rooms as public channels
 - Ciphertext envelopes and timing for all rooms (blind relay + SQLCipher storage)
+
+This does not claim E2EE against a malicious client publisher, compromised build/signing identity, or compromised endpoint. A web page and its SRI hashes delivered by the relay cannot authenticate themselves; use the separately attested local client.
 
 ---
 
@@ -505,7 +579,7 @@ The binary release is **free to use**. If you want to study, audit, or build upo
 
 > ### [Purchase Source Code — $49](https://www.dev-offcode.com/TorChatPage.html)
 >
-> Includes the complete C# source (ChatServer + ServerManager), JavaScript crypto layer, build scripts, and personal/educational use license.
+> Includes the complete C# source (ChatServer + ServerManager + TorChat.ClientHost), JavaScript crypto layer, build scripts, and personal/educational use license.
 
 ---
 
@@ -572,7 +646,7 @@ By downloading, installing, hosting, joining, or continuing to use OffCode Tor C
 ## License
 
 The **compiled binary** is free for personal and commercial use.  
-The **source code** is available at [dev-offcode.com](https://www.dev-offcode.com/TorChatPage.html) ($49, personal developer license — ChatServer + Server Manager + E2EE client).  
+The **source code** is available at [dev-offcode.com](https://www.dev-offcode.com/TorChatPage.html) ($49, personal developer license — ChatServer + Server Manager + TorChat.ClientHost).  
 Commercial redistribution / resale of source requires a separate license — contact via the website.
 
 ---
@@ -584,6 +658,32 @@ Commercial redistribution / resale of source requires a separate license — con
 ## Changelog
 
 Newest first. Product narrative lives in the sections above; this list tracks shipped source changes.
+
+
+
+### 2026-10-10 — SECURITY
+
+- **Manager public rooms** — Server Manager Create room (`POST /api/rooms` on the admin port) adds an open public room (name only). Rooms bind the persistent operator recovery (`AdminKeyTextBox1`, DPAPI LocalAppData). Copy into onion Profile **Restore** for Settings. DELETE and list unchanged.
+- **Manager operator recovery** — one Base64URL creator secret (same format as the site recovery). Not an extra key type; SHA-256 `room_creators` only. Unprotect failure does not rotate. Not stored in `config.ini`. Copper **i** next to Admin key opens an OK-only info dialog (copy → Profile Restore).
+- **Maximum Number of Rooms** — Manager `MaxRoomsTxt` (0–10000) caps public rooms on hub `CreateRoom`. Hard cap 10 000 unchanged. Live `PUT /api/admin/room-policy` + SignalR `OperatorPolicy`.
+- **Disable Room Creation** — Manager checkbox blocks all onion `CreateRoom` immediately. Manager `POST /api/rooms` still works.
+- **Manager Save config** — `config.ini` also stores public-room policy, **Start server on startup**, and **Tor connection**. Save writes HKCU Run (`TorChat Server Manager`) so logon opens Server Manager; then ChatServer (and Tor if saved on) start without dialogs. Uncheck + Save removes the Run value.
+- **Onion page weight** — 3 self-hosted woff2 (was 9); gzip HTML/CSS/JS only (not JSON/SignalR); non-boot scripts `defer` in document order. No CDN, no HSTS, SRI/CSP unchanged.
+- **Hybrid history UX** — after reload, stored `ecdh-hybrid-v1` from a prior join shows a previous-session placeholder (fail-closed; no `roomKey` fallback). Display only: AES-GCM / PBKDF2 / P-256 / HKDF unchanged; ECDH private keys stay non-extractable and are not persisted. Tests: `tests/hybrid-history`.
+- **Leave transcript DOM** — `returnToLobby` / `performJoin` call `clearRoomUiDom`: revoke `blob:` image URLs, remove `#messages` children, clear draft / safety-number / room label. Not a forensic heap wipe and not account logout; `localStorage` recovery tokens stay (C-4).
+- **Safety number display** — 1:1 SAS shows eight 5-digit groups from 128 bits of SHA-256 (`BigInt`; not JS `Number`). AES-GCM / PBKDF2 / P-256 and `sessionStorage` TOFU on `hashHex` are unchanged. Old 3×5 vs new 8×5 fail-closed until both clients upgrade.
+- **Intro DoS** — `HiddenServiceEnableIntroDoSDefense` with Tor man-page burst/rate (200 / 25) on honest introduction points (Proposal 305). Complements `HiddenServiceMaxStreams` (rendezvous only).
+- **HS PoW** — `HiddenServicePoWDefensesEnabled` (Equi-X v1, Proposal 327) with queue 250 / burst 2500. Dormant until the service is overloaded; clients bid effort (Tor Browser supported).
+- **Version gate** — Server Manager parses `tor --version` and writes those keys only for Tor ≥ 0.4.8 (unknown options abort older daemons).
+- **Docker** — same torrc keys; Alpine 3.21 image pins `tor=0.4.9.13-r0`.
+- **Loopback-only admin port** — Manager reserves a second free loopback port (`TORCHAT_ADMIN_PORT`) that the Hidden Service never publishes; `/api/health`, `/api/rooms` (GET/POST), `DELETE /api/rooms/{id}`, `/api/admin/cors-onion` and `/api/admin/room-policy` return **404** on the Tor-facing port instead of a fingerprinting 401. Docker uses 8081 (never exposed). Unset = legacy all-ports behaviour for `dotnet run` and tests.
+- **Host fingerprint headers** — `Date` coarsened to whole minutes (no clock-skew correlation against a candidate clearnet host); `ETag` / `Last-Modified` stripped from static assets and the `index.html` fallback (both leak build mtime). `/css/*` and `/fonts/*` switch to `immutable` caching to keep Tor page loads fast.
+- **Invite enumeration ceiling** — server-wide 120 / min limit on `/api/invite` chained into the global limiter, on top of the per-connection limit that resets on every new circuit.
+- **JoinRoom timing** — closed / hidden denials now run the same discarded 250k PBKDF2 verification as every other denial, so response time no longer separates an existing room from a missing one (`ChatHubJoinRoomTimingTests`).
+- **Tor Expert Bundle pin** — `tor-expert-bundle.pin.json` SHA-256 of official Windows x86_64 `0.4.9.13` / `15.0.24`. Server Manager fail-closes on mismatch; no auto-download; Authenticode is not the trust root.
+- **Clock metadata** — hub and room unix-ms floored to UTC minutes; client AAD timestamp floored before encrypt; freshness/replay errors collapsed to `Message rejected.`
+- **Boot gate** — UI blocked unless loopback or Tor v3 `.onion` and Web Cryptography (`isSecureContext` + `crypto.subtle`) is available; overlay + `<noscript>` fail-closed.
+- **Pinned message** — creator-only; one pin per room; `PinMessage` / `UnpinMessage` (presence + owner tokens) relay stored ciphertext via `PinState`; pointer in `room_pins` (`nonce` + `clientSentAtUnixMs`); no plaintext or pinner identity; TTL CASCADE; 500-cap keeps the pinned row.
 
 ### 2026-08-12 — CHANGES
 
@@ -606,6 +706,10 @@ Newest first. Product narrative lives in the sections above; this list tracks sh
 - **API** — `IRoomInviteService.IsOwner`; optional fields on `JoinRoomRequest`.
 - **Disable attachments** — creator Room Settings toggle (`attachments_disabled` in SQLCipher). Members get `AttachmentsPolicy` on join / toggle; Attach button gated in `room-attachments.js`. Server enforces a text-only PayloadB64 size cap when disabled (blind relay cannot inspect ciphertext kind).
 - **Hub / registry** — `SetAttachmentsDisabled`, `InviteStatusResponse.AttachmentsDisabled`, registry getters/setters, DB migration.
-- **Room Settings UI** — wider two-column layout (Membership | Attachments; Slow mode compact row; Invite / Lock / Delete full width); denser hints and spacing.
+- **Room Settings UI** — wider two-column layout (Membership | Max members; Attachments | Announcement; Slow mode compact row; Invite / Lock / Delete full width); denser hints and spacing.
+- **Max members** — creator Room Settings toggle (`max_members` in SQLCipher, 0 = off, else 2–50). Enforced in `RoomPresenceService.Join`; public `"Room is full."`, hidden generic `"Cannot join room."`. Existing members stay if the cap is lowered.
+- **Announcement / read-only** — creator Room Settings toggle (`read_only`). Only the creator may `SendEncrypted` / `BeginAttachmentUpload`; owner tokens are extra hub args (not persisted). Members get a disabled composer (`room-readonly.js`).
+
+
 
 ---
